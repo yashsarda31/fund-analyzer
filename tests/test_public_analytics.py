@@ -25,3 +25,17 @@ def test_growth_rebases_first_value():
     assert rebased.iloc[0] == 100_000
     assert rebased.iloc[-1] == 120_000
 
+
+def test_daily_metrics_and_benchmark_alpha_are_calculated():
+    dates = pd.bdate_range("2024-01-01", periods=300)
+    values = pd.Series([100 * (1.0005 ** i) for i in range(300)], index=dates)
+    benchmark = pd.Series([100 * (1.0003 ** i) for i in range(300)], index=dates)
+    result = calculate_public_metrics(values, benchmark, 0.06)
+    assert result.values["volatility"] is not None
+    assert result.values["sharpe"] is not None
+    assert result.values["alpha"] is not None
+
+
+def test_empty_and_invalid_growth_series_is_empty():
+    assert growth_of_amount(pd.Series(dtype=float)).empty
+    assert growth_of_amount(series([0, 2])).empty

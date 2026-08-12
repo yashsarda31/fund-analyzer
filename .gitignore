@@ -5,8 +5,8 @@
 htmlcov/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-

@@ -1,8 +1,11 @@
 from datetime import date, datetime, timezone
 
 import pytest
+import httpx
 
+from fund_analyzer.ai.client import AIClient
 from fund_analyzer.ai.validation import AIValidationError, build_evidence_packet, validate_ai_analysis
+from fund_analyzer.config import AppConfig
 from fund_analyzer.models import AIAnalysis, AIConclusion, EvidenceItem, EvidenceKind, ProductIdentity, ProductType, SourceRef
 
 
@@ -41,3 +44,18 @@ def test_hallucinated_number_invalidates_ai_response():
 def test_valid_response_passes():
     assert validate_ai_analysis(valid_analysis(), packet()).confidence == "medium"
 
+
+def test_ai_client_parses_valid_openai_response():
+    payload = valid_analysis().model_dump_json()
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": [{"message": {"content": payload}}]}))
+    config = AppConfig.load({"ai": {"base_url": "https://ai.example/v1", "api_key": "secret", "model": "minimax-m3"}})
+    result = AIClient(config, transport=transport).analyze(packet())
+    assert result.available is True
+
+
+def test_ai_client_redacts_key_after_two_failures():
+    transport = httpx.MockTransport(lambda request: httpx.Response(401, text="Bearer secret"))
+    config = AppConfig.load({"ai": {"base_url": "https://ai.example/v1", "api_key": "secret", "model": "minimax-m3"}})
+    result = AIClient(config, transport=transport).analyze(packet())
+    assert result.available is False
+    assert "secret" not in " ".join(result.limitations)

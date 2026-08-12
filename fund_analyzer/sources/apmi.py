@@ -35,6 +35,5 @@ class ApmiCollector:
         self.http = http or SafeHttpClient()
 
     def performance(self) -> list[dict]:
-        response = self.http.get(APMI_URL, accepted_types={"text/html"})
+        response = self.http.get(APMI_URL, accepted_types={"text/html"}, max_bytes=30_000_000)
         return parse_apmi_performance(response.text, datetime.now().astimezone())
-
