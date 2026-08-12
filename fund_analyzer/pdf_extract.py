@@ -24,6 +24,14 @@ FIELD_PATTERNS = {
     "Minimum investment": (r"minimum\s+investment\s*[:\-]\s*([^\n]+)", None),
     "Benchmark": (r"benchmark\s*[:\-]\s*([^\n]+)", None),
     "AUM": (r"(?:aum|corpus)\s*[:\-]\s*([^\n]+)", None),
+    "IRR": (r"(?:net\s+)?irr\s*[:\-]\s*(\d+(?:\.\d+)?)\s*%", "%"),
+    "TVPI": (r"tvpi\s*[:\-]\s*(\d+(?:\.\d+)?)\s*x?", "x"),
+    "DPI": (r"dpi\s*[:\-]\s*(\d+(?:\.\d+)?)\s*x?", "x"),
+    "RVPI": (r"rvpi\s*[:\-]\s*(\d+(?:\.\d+)?)\s*x?", "x"),
+    "MOIC": (r"moic\s*[:\-]\s*(\d+(?:\.\d+)?)\s*x?", "x"),
+    "1-year return": (r"1[ -]?year\s+return\s*[:\-]\s*(\-?\d+(?:\.\d+)?)\s*%", "%"),
+    "3-year return": (r"3[ -]?year\s+return\s*[:\-]\s*(\-?\d+(?:\.\d+)?)\s*%", "%"),
+    "5-year return": (r"5[ -]?year\s+return\s*[:\-]\s*(\-?\d+(?:\.\d+)?)\s*%", "%"),
 }
 
 
@@ -80,4 +88,3 @@ def extract_pdf(data: bytes, expected_identity: ProductIdentity) -> PdfExtractio
                 excerpt=excerpt,
             ))
     return PdfExtraction(identity_match="match", evidence=evidence, text_by_page=pages)
-
