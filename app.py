@@ -8,9 +8,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from fund_analyzer.ai.client import AIClient
+from fund_analyzer.cash_flow_input import parse_cash_flow_rows
 from fund_analyzer.config import AppConfig
 from fund_analyzer.identity import rank_matches
-from fund_analyzer.models import AnalysisStatus, EvidenceKind, ProductIdentity, ProductType
+from fund_analyzer.models import AnalysisStatus, CashFlowKind, EvidenceKind, ProductIdentity, ProductType
 from fund_analyzer.orchestration import AnalysisRequest, FundAnalyzer, Services
 from fund_analyzer.reporting import build_report_view
 from fund_analyzer.sources.amfi import AmfiCollector
@@ -81,13 +82,24 @@ def render_report(report):
     identity_cols[3].metric("Registration / code", report.identity.registration_id or report.identity.scheme_code or "Not verified")
 
     if report.chart:
-        range_key = st.segmented_control("History", ["1Y", "3Y", "5Y", "Max"], default="Max", key="range")
-        view = build_report_view(report, range_key or "Max")
         figure = go.Figure()
-        figure.add_trace(go.Scatter(x=[point.date for point in view.chart.product], y=[point.value for point in view.chart.product], name="Product", line={"color": "#5B5CF6", "width": 2.5}))
-        if view.chart.benchmark:
-            figure.add_trace(go.Scatter(x=[point.date for point in view.chart.benchmark], y=[point.value for point in view.chart.benchmark], name="Benchmark", line={"color": "#94A3B8", "width": 2}))
-        figure.update_layout(height=420, margin=dict(l=10, r=10, t=20, b=10), yaxis_title="Growth of ₹1 lakh", legend_orientation="h", hovermode="x unified")
+        if report.chart.kind == "cash_flow_timeline":
+            points = report.chart.product
+            figure.add_trace(go.Bar(
+                x=[point.date for point in points],
+                y=[point.value for point in points],
+                name="Dated cash flow / residual value",
+                marker_color=["#EF4444" if point.value < 0 else "#10B981" for point in points],
+            ))
+            figure.update_layout(yaxis_title="Amount (INR)", barmode="relative")
+        else:
+            range_key = st.segmented_control("History", ["1Y", "3Y", "5Y", "Max"], default="Max", key="range")
+            view = build_report_view(report, range_key or "Max")
+            figure.add_trace(go.Scatter(x=[point.date for point in view.chart.product], y=[point.value for point in view.chart.product], name="Product", line={"color": "#5B5CF6", "width": 2.5}))
+            if view.chart.benchmark:
+                figure.add_trace(go.Scatter(x=[point.date for point in view.chart.benchmark], y=[point.value for point in view.chart.benchmark], name="Benchmark", line={"color": "#94A3B8", "width": 2}))
+            figure.update_layout(yaxis_title="Growth of ₹1 lakh", legend_orientation="h", hovermode="x unified")
+        figure.update_layout(height=420, margin=dict(l=10, r=10, t=20, b=10))
         st.plotly_chart(figure, width="stretch")
     else:
         st.info("A NAV-style chart is not shown because the available evidence does not contain a defensible continuous performance series.")
@@ -97,8 +109,13 @@ def render_report(report):
         cols = st.columns(min(4, len(valid_metrics)))
         for index, metric in enumerate(valid_metrics):
             value = metric.value
-            display = f"{value * 100:.2f}%" if metric.unit == "%" else f"{value:.2f}"
-            cols[index % len(cols)].metric(metric.label, display)
+            if metric.unit == "%":
+                display = f"{value * 100:.2f}%"
+            elif metric.unit == "x":
+                display = f"{value:.2f}x"
+            else:
+                display = f"{value:.2f}"
+            cols[index % len(cols)].metric(metric.label, display, help=f"As of {metric.as_of}" if metric.as_of else None)
 
     st.markdown("### Investment case")
     pros_col, cons_col = st.columns(2)
@@ -135,10 +152,17 @@ def render_report(report):
 
     with st.expander(f"Evidence and sources ({len(report.evidence)})"):
         for item in report.evidence:
-            label = "Verified Fact" if item.kind is EvidenceKind.VERIFIED_FACT else "Calculated Metric"
+            label = {
+                EvidenceKind.VERIFIED_FACT: "Verified fact",
+                EvidenceKind.CALCULATED_METRIC: "Calculated metric",
+                EvidenceKind.USER_INPUT: "User input",
+                EvidenceKind.DOCUMENT_EXTRACT: "OCR extract - verify",
+                EvidenceKind.AI_ASSESSMENT: "AI assessment",
+            }[item.kind]
             link = f"[source]({item.source.url})" if item.source.url else item.source.title
             page = f", page {item.source.page}" if item.source.page else ""
-            st.markdown(f"{badge(label)} **{html.escape(item.label)}:** {html.escape(str(item.value))} {html.escape(item.unit or '')}  \n{link} · observed {item.source.observed_at}{page} · retrieved {item.source.retrieved_at.date()}", unsafe_allow_html=True)
+            confidence = f" · extraction confidence {item.confidence:.0%}" if item.confidence < 1 else ""
+            st.markdown(f"{badge(label)} **{html.escape(item.label)}:** {html.escape(str(item.value))} {html.escape(item.unit or '')}  \n{link} · observed {item.source.observed_at}{page} · retrieved {item.source.retrieved_at.date()}{confidence}", unsafe_allow_html=True)
 
     st.caption("Research tool only. Past performance may not be sustained. AI assessments may be wrong and are not investment advice.")
 
@@ -167,7 +191,29 @@ with input_card:
     query = right.text_input("Product or strategy name", placeholder="e.g. Parag Parikh Flexi Cap Fund")
     provider = st.text_input("Manager / AMC (required for manual AIF lookup)", placeholder="e.g. Example Capital")
     public_url = st.text_input("Official website or factsheet URL (optional)", placeholder="https://...")
-    pdf = st.file_uploader("Factsheet PDF (optional, text-based, max 15 MB)", type=["pdf"])
+    pdf = st.file_uploader("Factsheet PDF (optional, text or scanned, max 15 MB)", type=["pdf"])
+    st.caption("Scanned pages are OCR-processed on this computer only. OCR fields are flagged for manual verification.")
+    cash_flow_rows = None
+    if TYPE_LABELS[product_label] is ProductType.AIF:
+        st.markdown("#### Dated AIF cash flows")
+        st.info("Enter positive amounts. Contribution rows are treated as investor outflows; distributions and the single terminal residual value are inflows.")
+        cash_flow_rows = st.data_editor(
+            pd.DataFrame({
+                "date": pd.Series(dtype="datetime64[ns]"),
+                "kind": pd.Series(dtype="string"),
+                "amount": pd.Series(dtype="float64"),
+                "note": pd.Series(dtype="string"),
+            }),
+            key="aif_cash_flow_editor",
+            num_rows="dynamic",
+            hide_index=True,
+            column_config={
+                "date": st.column_config.DateColumn("Date", required=True),
+                "kind": st.column_config.SelectboxColumn("Type", options=[item.value for item in CashFlowKind], required=True),
+                "amount": st.column_config.NumberColumn("Amount (INR)", min_value=0.0, format="%.2f", required=True),
+                "note": st.column_config.TextColumn("Source note", help="Optional capital-call, distribution, or valuation statement reference"),
+            },
+        )
     if st.button("Find product", key="search", type="secondary", disabled=not bool(query.strip())):
         st.session_state.report = None
         st.session_state.candidates, warning = find_candidates(TYPE_LABELS[product_label], query, provider)
@@ -188,8 +234,13 @@ with input_card:
     analyze = st.button("Analyze", key="analyze", type="primary", disabled=selected is None)
 
 if analyze and selected:
-    with st.spinner("Collecting and validating evidence…"):
-        st.session_state.report = FundAnalyzer(services()).analyze(AnalysisRequest(identity=selected, public_url=public_url.strip() or None, pdf_bytes=pdf.getvalue() if pdf else None, benchmark_override=benchmark.strip() or None))
+    try:
+        cash_flows = parse_cash_flow_rows(cash_flow_rows.to_dict("records")) if cash_flow_rows is not None else []
+    except ValueError as exc:
+        st.error(str(exc))
+    else:
+        with st.spinner("Collecting and validating evidence…"):
+            st.session_state.report = FundAnalyzer(services()).analyze(AnalysisRequest(identity=selected, public_url=public_url.strip() or None, pdf_bytes=pdf.getvalue() if pdf else None, benchmark_override=benchmark.strip() or None, cash_flows=cash_flows))
 
 if st.session_state.report:
     render_report(st.session_state.report)

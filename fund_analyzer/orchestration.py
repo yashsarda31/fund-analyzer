@@ -4,11 +4,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .ai.validation import build_evidence_packet
+from .analytics.private_markets import analyze_private_market_cash_flows
 from .analytics.public_markets import calculate_public_metrics, growth_of_amount
-from .models import AnalysisReport, AnalysisStatus, ChartSpec, EvidenceItem, EvidenceKind, Metric, PerformancePoint, ProductIdentity, ProductType, SourceRef
+from .models import AnalysisReport, AnalysisStatus, CashFlowKind, ChartSpec, EvidenceItem, EvidenceKind, Metric, PerformancePoint, PrivateMarketCashFlow, ProductIdentity, ProductType, SourceRef
 from .pdf_extract import extract_pdf
 
 
@@ -18,6 +19,7 @@ class AnalysisRequest(BaseModel):
     public_url: str | None = None
     pdf_bytes: bytes | None = None
     benchmark_override: str | None = None
+    cash_flows: list[PrivateMarketCashFlow] = Field(default_factory=list)
 
 
 class Services(BaseModel):
@@ -80,7 +82,55 @@ class FundAnalyzer:
             warnings.extend(pdf.warnings)
 
         chart = None
-        if points:
+        if request.identity.product_type is ProductType.AIF and request.cash_flows:
+            try:
+                analysis = analyze_private_market_cash_flows(request.cash_flows)
+                retrieved = datetime.now(timezone.utc)
+                input_ids: list[str] = []
+                contribution_ids: list[str] = []
+                distribution_ids: list[str] = []
+                residual_ids: list[str] = []
+                for index, flow in enumerate(request.cash_flows, 1):
+                    item_id = f"user-cash-flow-{index}"
+                    input_ids.append(item_id)
+                    if flow.kind is CashFlowKind.CONTRIBUTION:
+                        contribution_ids.append(item_id)
+                    elif flow.kind is CashFlowKind.DISTRIBUTION:
+                        distribution_ids.append(item_id)
+                    else:
+                        residual_ids.append(item_id)
+                    evidence.append(EvidenceItem(
+                        id=item_id,
+                        kind=EvidenceKind.USER_INPUT,
+                        label=f"{flow.kind.value} on {flow.date.isoformat()}",
+                        value=flow.amount,
+                        unit="INR",
+                        source=SourceRef(
+                            title="User-entered dated AIF cash flow",
+                            publisher="User input",
+                            observed_at=flow.date,
+                            retrieved_at=retrieved,
+                        ),
+                        excerpt=flow.note,
+                    ))
+                metrics = [
+                    Metric(key="xirr", label="XIRR", value=analysis.xirr, unit="%", period="Since first cash flow", as_of=analysis.as_of, source_ids=input_ids),
+                    Metric(key="tvpi", label="TVPI", value=analysis.multiples.tvpi, unit="x", as_of=analysis.as_of, source_ids=input_ids),
+                    Metric(key="dpi", label="DPI", value=analysis.multiples.dpi, unit="x", as_of=analysis.as_of, source_ids=[*contribution_ids, *distribution_ids]),
+                    Metric(key="rvpi", label="RVPI", value=analysis.multiples.rvpi, unit="x", as_of=analysis.as_of, source_ids=[*contribution_ids, *residual_ids]),
+                ]
+                chart = ChartSpec(kind="cash_flow_timeline", product=[
+                    PerformancePoint(
+                        date=flow.date,
+                        value=-flow.amount if flow.kind is CashFlowKind.CONTRIBUTION else flow.amount,
+                        series_kind="valuation" if flow.kind is CashFlowKind.RESIDUAL_VALUE else "cash_flow",
+                    )
+                    for flow in request.cash_flows
+                ])
+                warnings.append("AIF calculations use user-entered cash flows. Verify every date and amount against capital-call, distribution, and valuation statements.")
+            except ValueError as exc:
+                warnings.append(f"AIF cash-flow calculation unavailable: {exc}")
+        elif points:
             series = pd.Series({pd.Timestamp(point.date): point.value for point in points}).sort_index()
             calculated = calculate_public_metrics(series, None, None)
             metrics = [Metric(key=key, label=key.replace("_", " ").title(), value=value, unit="ratio" if key in {"sharpe", "sortino"} else "%" if value is not None else "", as_of=points[-1].date, warnings=calculated.warnings if key == "cagr_1y" else []) for key, value in calculated.values.items()]
@@ -92,7 +142,7 @@ class FundAnalyzer:
                 EvidenceItem(id="performance-end", kind=EvidenceKind.VERIFIED_FACT, label="Latest NAV", value=points[-1].value, unit="NAV", source=SourceRef(title="AMFI NAV history", publisher="AMFI", url="https://www.amfiindia.com/net-asset-value", observed_at=points[-1].date, retrieved_at=now)),
             ])
 
-        has_performance = bool(points) or any("return" in item.label.lower() or item.label in {"TVPI", "DPI", "IRR"} for item in evidence)
+        has_performance = bool(points) or bool(metrics) or any("return" in item.label.lower() or item.label in {"TVPI", "DPI", "IRR"} for item in evidence)
         if source_failed and not has_performance:
             status = AnalysisStatus.SOURCE_UNAVAILABLE
         elif not has_performance:

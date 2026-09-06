@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from fund_analyzer.models import AIAnalysis, AIConclusion, AnalysisStatus, PerformancePoint, ProductIdentity, ProductType, SourceResult
+from fund_analyzer.models import AIAnalysis, AIConclusion, AnalysisStatus, CashFlowKind, EvidenceKind, PerformancePoint, PrivateMarketCashFlow, ProductIdentity, ProductType, SourceResult
 from fund_analyzer.orchestration import AnalysisRequest, FundAnalyzer, Services
 
 
@@ -41,3 +41,22 @@ def test_all_required_sources_down_is_source_unavailable():
     identity = ProductIdentity(product_type=ProductType.MUTUAL_FUND, name="Example", provider="AMC", scheme_code="1")
     report = FundAnalyzer(Services(amfi=Down())).analyze(AnalysisRequest(identity=identity))
     assert report.status is AnalysisStatus.SOURCE_UNAVAILABLE
+
+
+def test_aif_dated_cash_flows_create_calculated_metrics_and_timeline():
+    identity = ProductIdentity(product_type=ProductType.AIF, name="Example AIF", provider="Manager")
+    flows = [
+        PrivateMarketCashFlow(date=date(2023, 1, 1), kind=CashFlowKind.CONTRIBUTION, amount=100),
+        PrivateMarketCashFlow(date=date(2024, 1, 1), kind=CashFlowKind.DISTRIBUTION, amount=20),
+        PrivateMarketCashFlow(date=date(2026, 1, 1), kind=CashFlowKind.RESIDUAL_VALUE, amount=110),
+    ]
+
+    report = FundAnalyzer(Services()).analyze(AnalysisRequest(identity=identity, cash_flows=flows))
+
+    assert {metric.key for metric in report.metrics} == {"xirr", "tvpi", "dpi", "rvpi"}
+    assert all(metric.source_ids for metric in report.metrics)
+    assert report.chart is not None
+    assert report.chart.kind == "cash_flow_timeline"
+    assert [point.value for point in report.chart.product] == [-100, 20, 110]
+    assert all(item.kind is EvidenceKind.USER_INPUT for item in report.evidence)
+    assert report.status is AnalysisStatus.PARTIAL

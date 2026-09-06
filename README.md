@@ -40,9 +40,10 @@ The browser opens at `http://127.0.0.1:8501`.
 1. Select Mutual Fund, PMS, or AIF.
 2. Search by product/strategy name. For an AIF, also enter the manager.
 3. Confirm the exact product. Direct/regular and growth/distribution plans remain separate.
-4. Optionally add an official public URL and one text-based PDF factsheet.
-5. Check or override the suggested benchmark.
-6. Select **Analyze**.
+4. Optionally add an official public URL and one text-based or scanned PDF factsheet.
+5. For an AIF, add dated contribution, distribution, and terminal residual-value rows. Enter positive amounts; the event type controls the sign.
+6. Check or override the suggested benchmark.
+7. Select **Analyze**.
 
 The report shows performance only when a defensible series exists. It labels content as a verified fact, calculated metric, or AI assessment and preserves dates and source links.
 
@@ -58,9 +59,12 @@ The report shows performance only when a defensible series exists. It labels con
 - Mutual-fund identity and latest NAV data originate with AMFI. Long NAV history is retrieved from the public MFAPI service, which republishes AMFI records; the report discloses this intermediary.
 - PMS performance is read from APMI's investment-approach table. `NA` remains missing and is never converted to zero.
 - SEBI registration/disclosure records establish identity and regulatory context, not scheme-level AIF performance.
-- AIF analysis usually needs a dated manager factsheet. IRR, TVPI, DPI, RVPI, and MOIC are not converted into NAV or CAGR.
+- AIF analysis usually needs a dated manager factsheet. XIRR, TVPI, DPI, and RVPI are calculated only from structured user-entered cash flows and are not converted into NAV or CAGR.
+- XIRR uses actual dates. TVPI is `(distributions + residual value) / contributions`; DPI is `distributions / contributions`; RVPI is `residual value / contributions`.
+- AIF input requires exactly one residual-value row, dated no earlier than every contribution or distribution. Enter zero explicitly for a fully realized fund.
 - NSE TRI and RBI parser modules enforce official data shapes, but a missing or changed upstream service is shown as unavailable rather than silently substituted.
-- PDFs must contain selectable text, be no more than 15 MB and 150 pages, and match the confirmed product. OCR is not included.
+- PDFs must be no more than 15 MB and 150 pages and match the confirmed product. Sparse or image-only pages use local English OCR for up to 50 pages.
+- OCR never sends a page to a cloud service. OCR-derived fields are marked as lower-confidence document extracts and must be checked against the original scan.
 - Public sources can change markup or restrict automated access. Such failures produce explicit warnings.
 - AI may make independent judgments but cannot alter supplied numbers; each conclusion must cite evidence IDs. Invalid model output is rejected.
 
@@ -70,6 +74,16 @@ The report shows performance only when a defensible series exists. It labels con
 - Uploaded PDF bytes and report objects live only in the current Streamlit session.
 - Public URLs reject local, private, link-local, reserved, credential-bearing, and non-HTTP(S) targets.
 - Web pages and PDFs are treated as untrusted data and cannot override AI rules.
+
+## Local OCR setup
+
+This workspace already has the English OCR language model under the ignored `.tools` directory. On a fresh checkout, install Tesseract OCR with:
+
+```powershell
+winget install --id UB-Mannheim.TesseractOCR --exact
+```
+
+PyMuPDF looks for English language data in the project-local `.tools\Tesseract-OCR\tessdata`, the standard Windows installation folder, and the current user's local-programs folder. If it cannot find `eng.traineddata`, scanned PDFs remain private but the report shows an explicit local-OCR-unavailable warning.
 
 ## Tests
 
@@ -81,8 +95,8 @@ The report shows performance only when a defensible series exists. It labels con
 
 - **No products found:** simplify the query and confirm internet access.
 - **AI not configured:** copy the example secrets file and check the base URL, key, and model.
-- **PDF mismatch:** confirm the selected scheme/strategy and upload its own latest factsheet.
-- **No chart for an AIF:** provide dated cash flows/valuations; snapshot multiples cannot responsibly form a NAV line.
+- **PDF mismatch:** confirm the selected scheme/strategy and upload its own latest factsheet. Check OCR spellings on low-quality scans.
+- **No chart for an AIF:** provide contributions, distributions, and one latest residual value. Snapshot factsheet multiples do not create a cash-flow timeline.
 - **Source unavailable:** retry later. The app will not invent a replacement value.
 
 ## Disclaimer

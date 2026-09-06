@@ -17,6 +17,14 @@ class EvidenceKind(StrEnum):
     VERIFIED_FACT = "verified_fact"
     CALCULATED_METRIC = "calculated_metric"
     AI_ASSESSMENT = "ai_assessment"
+    USER_INPUT = "user_input"
+    DOCUMENT_EXTRACT = "document_extract"
+
+
+class CashFlowKind(StrEnum):
+    CONTRIBUTION = "Contribution"
+    DISTRIBUTION = "Distribution"
+    RESIDUAL_VALUE = "Residual value"
 
 
 class AnalysisStatus(StrEnum):
@@ -68,6 +76,14 @@ class PerformancePoint(BaseModel):
     date: date
     value: float
     series_kind: Literal["NAV", "TWRR", "TRI", "valuation", "cash_flow"]
+
+
+class PrivateMarketCashFlow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    date: date
+    kind: CashFlowKind
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    note: str | None = Field(default=None, max_length=200)
 
 
 class Metric(BaseModel):
@@ -124,4 +140,3 @@ class AnalysisReport(BaseModel):
     ai: AIAnalysis | None = None
     chart: ChartSpec | None = None
     warnings: list[str] = Field(default_factory=list)
-
