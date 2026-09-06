@@ -20,10 +20,10 @@ Edit `.streamlit\secrets.toml` with your endpoint:
 [ai]
 base_url = "https://api.tokenrouter.com/v1"
 api_key = "your-key"
-model = "z-ai/glm-5.3"
+model = "z-ai/glm-5.3-free"
 ```
 
-The endpoint must expose an OpenAI-compatible `/chat/completions` API. For a local Ollama-compatible server that does not require authentication, use any non-empty placeholder key accepted by that server. The real secrets file is excluded from Git and the key is redacted from application errors.
+The endpoint must expose an OpenAI-compatible `/chat/completions` API. The default `z-ai/glm-5.3-free` model runs on tokenrouter without paid credit; switch `model` to `z-ai/glm-5.3` after topping up if you prefer the paid variant. For a local Ollama-compatible server, point `base_url` at it and use any non-empty placeholder key accepted by that server. The real secrets file is excluded from Git and the key is redacted from application errors.
 
 ## Run
 
