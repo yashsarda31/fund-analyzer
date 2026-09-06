@@ -63,6 +63,29 @@ def test_url_credentials_and_dns_failure_are_rejected(monkeypatch):
         validate_public_url("https://missing.example")
 
 
+def test_http_client_post_json_validates_and_retries(monkeypatch):
+    monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    calls = []
+    def handler(request):
+        calls.append(request)
+        import json as json_module
+        if len(calls) < 2:
+            return httpx.Response(503)
+        return httpx.Response(200, headers={"content-type": "application/json"}, content=json_module.dumps({"d": "[1,2]"}).encode())
+    client = SafeHttpClient(httpx.MockTransport(handler))
+    response = client.post_json("https://example.com/api", payload={"name": "NIFTY 500"})
+    assert response.json()["d"] == "[1,2]"
+    assert len(calls) == 2
+    bad_type = SafeHttpClient(httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "text/html"}, content=b"<p>hi</p>")))
+    with pytest.raises(SourceFetchError, match="content type"):
+        bad_type.post_json("https://example.com/api", payload={})
+
+
+def test_http_client_post_json_rejects_private_target():
+    with pytest.raises(UnsafeUrlError):
+        SafeHttpClient(httpx.MockTransport(lambda request: httpx.Response(200))).post_json("http://127.0.0.1/api", payload={})
+
+
 def test_redirect_limit_and_final_http_error(monkeypatch):
     monkeypatch.setattr("socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))])
     redirecting = SafeHttpClient(httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": "https://example.com/again"})))

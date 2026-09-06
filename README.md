@@ -18,9 +18,9 @@ Edit `.streamlit\secrets.toml` with your endpoint:
 
 ```toml
 [ai]
-base_url = "http://127.0.0.1:11434/v1"
+base_url = "https://api.tokenrouter.com/v1"
 api_key = "your-key"
-model = "minimax-m3"
+model = "z-ai/glm-5.3"
 ```
 
 The endpoint must expose an OpenAI-compatible `/chat/completions` API. For a local Ollama-compatible server that does not require authentication, use any non-empty placeholder key accepted by that server. The real secrets file is excluded from Git and the key is redacted from application errors.
@@ -57,6 +57,7 @@ The report shows performance only when a defensible series exists. It labels con
 ## Sources and limitations
 
 - Mutual-fund identity and latest NAV data originate with AMFI. Long NAV history is retrieved from the public MFAPI service, which republishes AMFI records; the report discloses this intermediary.
+- Benchmark comparison uses NSE Total Returns Index history fetched live. If NSE cannot be reached or the benchmark name cannot be mapped to a published index, the report says so and stays partial rather than inventing a comparison.
 - PMS performance is read from APMI's investment-approach table. `NA` remains missing and is never converted to zero.
 - SEBI registration/disclosure records establish identity and regulatory context, not scheme-level AIF performance.
 - AIF analysis usually needs a dated manager factsheet. XIRR, TVPI, DPI, and RVPI are calculated only from structured user-entered cash flows and are not converted into NAV or CAGR.

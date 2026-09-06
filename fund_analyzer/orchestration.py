@@ -68,6 +68,33 @@ class FundAnalyzer:
                 source_failed = True
                 warnings.append(f"APMI source unavailable: {type(exc).__name__}")
 
+        benchmark_name = (request.benchmark_override or request.identity.benchmark or "").strip()
+        benchmark_series: pd.Series | None = None
+        if request.identity.product_type is ProductType.MUTUAL_FUND and points and benchmark_name and self.services.nifty:
+            try:
+                bench = self.services.nifty.tri_history(benchmark_name)
+                if bench.available and bench.performance_points:
+                    benchmark_series = pd.Series({pd.Timestamp(point.date): point.value for point in bench.performance_points}).sort_index()
+                    last = bench.performance_points[-1]
+                    evidence.append(EvidenceItem(
+                        id="benchmark-series",
+                        kind=EvidenceKind.VERIFIED_FACT,
+                        label=f"Benchmark TRI series ({benchmark_name})",
+                        value=last.value,
+                        unit="index",
+                        source=SourceRef(
+                            title=f"NSE Total Returns Index: {benchmark_name}",
+                            publisher="NSE",
+                            url="https://www.niftyindices.com/",
+                            observed_at=last.date,
+                            retrieved_at=datetime.now(timezone.utc),
+                        ),
+                    ))
+                else:
+                    warnings.extend(bench.warnings or [f"Benchmark series unavailable: {bench.error_code}"])
+            except Exception as exc:
+                warnings.append(f"Benchmark series unavailable: {type(exc).__name__}")
+
         if request.public_url and self.services.public_page:
             try:
                 result = self.services.public_page.extract(request.public_url, request.identity)
@@ -132,10 +159,18 @@ class FundAnalyzer:
                 warnings.append(f"AIF cash-flow calculation unavailable: {exc}")
         elif points:
             series = pd.Series({pd.Timestamp(point.date): point.value for point in points}).sort_index()
-            calculated = calculate_public_metrics(series, None, None)
-            metrics = [Metric(key=key, label=key.replace("_", " ").title(), value=value, unit="ratio" if key in {"sharpe", "sortino"} else "%" if value is not None else "", as_of=points[-1].date, warnings=calculated.warnings if key == "cagr_1y" else []) for key, value in calculated.values.items()]
+            bench_aligned: pd.Series | None = None
+            if benchmark_series is not None:
+                trimmed = benchmark_series[benchmark_series.index >= series.index.min()]
+                bench_aligned = trimmed if not trimmed.empty else benchmark_series
+            calculated = calculate_public_metrics(series, bench_aligned, None)
+            metrics = [Metric(key=key, label=key.replace("_", " ").title(), value=value, unit="ratio" if key in {"sharpe", "sortino"} else "%", as_of=points[-1].date, warnings=calculated.warnings if key == "cagr_1y" else []) for key, value in calculated.values.items()]
             rebased = growth_of_amount(series)
-            chart = ChartSpec(kind="growth_of_100k", product=[PerformancePoint(date=index.date(), value=float(value), series_kind="NAV") for index, value in rebased.items()])
+            chart = ChartSpec(
+                kind="growth_of_100k",
+                product=[PerformancePoint(date=index.date(), value=float(value), series_kind="NAV") for index, value in rebased.items()],
+                benchmark=[PerformancePoint(date=index.date(), value=float(value), series_kind="TRI") for index, value in growth_of_amount(bench_aligned).items()] if bench_aligned is not None else [],
+            )
             now = datetime.now(timezone.utc)
             evidence.extend([
                 EvidenceItem(id="performance-start", kind=EvidenceKind.VERIFIED_FACT, label="Performance series start", value=points[0].value, unit="NAV", source=SourceRef(title="AMFI NAV history", publisher="AMFI", url="https://www.amfiindia.com/net-asset-value", observed_at=points[0].date, retrieved_at=now)),
@@ -143,12 +178,13 @@ class FundAnalyzer:
             ])
 
         has_performance = bool(points) or bool(metrics) or any("return" in item.label.lower() or item.label in {"TVPI", "DPI", "IRR"} for item in evidence)
+        benchmark_unavailable = request.identity.product_type is ProductType.MUTUAL_FUND and bool(benchmark_name) and benchmark_series is None
         if source_failed and not has_performance:
             status = AnalysisStatus.SOURCE_UNAVAILABLE
         elif not has_performance:
             status = AnalysisStatus.INSUFFICIENT
             warnings.append("Insufficient verified performance history")
-        elif not request.identity.benchmark and not request.benchmark_override:
+        elif benchmark_unavailable or not benchmark_name:
             status = AnalysisStatus.PARTIAL
             warnings.append("Benchmark comparison is unavailable")
         else:

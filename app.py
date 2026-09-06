@@ -16,12 +16,14 @@ from fund_analyzer.orchestration import AnalysisRequest, FundAnalyzer, Services
 from fund_analyzer.reporting import build_report_view
 from fund_analyzer.sources.amfi import AmfiCollector
 from fund_analyzer.sources.apmi import ApmiCollector
+from fund_analyzer.sources.nifty import NiftyCollector
 from fund_analyzer.sources.public_page import PublicPageCollector
 
 
 TYPE_LABELS = {"Mutual Fund": ProductType.MUTUAL_FUND, "PMS": ProductType.PMS, "AIF": ProductType.AIF}
 
 
+@st.cache_resource(show_spinner=False)
 def load_ai():
     try:
         config = AppConfig.load(st.secrets)
@@ -32,17 +34,27 @@ def load_ai():
         return None
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def cached_amfi_directory():
+    return AmfiCollector().directory().products
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def cached_apmi_rows():
+    return ApmiCollector().performance()
+
+
 def services() -> Services:
-    return Services(amfi=AmfiCollector(), apmi=ApmiCollector(), public_page=PublicPageCollector(), ai=load_ai())
+    return Services(amfi=AmfiCollector(), apmi=ApmiCollector(), public_page=PublicPageCollector(), nifty=NiftyCollector(), ai=load_ai())
 
 
 def find_candidates(product_type: ProductType, query: str, provider: str) -> tuple[list[ProductIdentity], str | None]:
     try:
         if product_type is ProductType.MUTUAL_FUND:
-            products = AmfiCollector().directory().products
+            products = cached_amfi_directory()
             return [match.identity for match in rank_matches(query, products)[:12] if match.score >= 55], None
         if product_type is ProductType.PMS:
-            rows = ApmiCollector().performance()
+            rows = cached_apmi_rows()
             products = [ProductIdentity(product_type=ProductType.PMS, name=row["approach"], provider=row["provider"]) for row in rows if row["approach"]]
             return [match.identity for match in rank_matches(query, products)[:12] if match.score >= 55], None
         if not provider.strip():

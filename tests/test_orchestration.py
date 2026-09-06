@@ -18,6 +18,24 @@ class FakeAI:
         return AIAnalysis(pros=[item] * 3, cons=[item] * 3, outlook=item, risks=[item], monitoring=[item], confidence="medium")
 
 
+class FakeNifty:
+    def __init__(self, available=True, error=RuntimeError):
+        self.available = available
+        self.error = error
+
+    def tri_history(self, benchmark_name):
+        if not self.available:
+            return SourceResult(source_name="NSE", available=False, error_code="no_data", warnings=[f"NSE returned no TRI rows for {benchmark_name}"])
+        start = date(2023, 1, 1)
+        points = [PerformancePoint(date=start + timedelta(days=i), value=20000 + i * 5, series_kind="TRI") for i in range(1000)]
+        return SourceResult(source_name="NSE", available=True, performance_points=points)
+
+
+class DownNifty:
+    def tri_history(self, benchmark_name):
+        raise RuntimeError("network")
+
+
 def test_mutual_fund_complete_report_uses_nav():
     identity = ProductIdentity(product_type=ProductType.MUTUAL_FUND, name="Example", provider="AMC", scheme_code="1", benchmark="Nifty 500 TRI")
     services = Services(amfi=FakeMF(), ai=FakeAI())
@@ -60,3 +78,32 @@ def test_aif_dated_cash_flows_create_calculated_metrics_and_timeline():
     assert [point.value for point in report.chart.product] == [-100, 20, 110]
     assert all(item.kind is EvidenceKind.USER_INPUT for item in report.evidence)
     assert report.status is AnalysisStatus.PARTIAL
+
+
+def test_mutual_fund_benchmark_series_is_compared_and_charted():
+    identity = ProductIdentity(product_type=ProductType.MUTUAL_FUND, name="Example", provider="AMC", scheme_code="1", benchmark="Nifty 500 TRI")
+    report = FundAnalyzer(Services(amfi=FakeMF(), nifty=FakeNifty())).analyze(AnalysisRequest(identity=identity))
+    assert report.chart is not None
+    assert report.chart.benchmark
+    assert all(point.series_kind == "TRI" for point in report.chart.benchmark)
+    assert any(item.id == "benchmark-series" for item in report.evidence)
+    alpha = next(metric for metric in report.metrics if metric.key == "alpha")
+    assert alpha.value is not None
+    assert report.status is AnalysisStatus.COMPLETE
+
+
+def test_benchmark_requested_but_unavailable_is_partial_with_warning():
+    identity = ProductIdentity(product_type=ProductType.MUTUAL_FUND, name="Example", provider="AMC", scheme_code="1", benchmark="Nifty 500 TRI")
+    report = FundAnalyzer(Services(amfi=FakeMF(), nifty=DownNifty())).analyze(AnalysisRequest(identity=identity))
+    assert report.chart is not None
+    assert not report.chart.benchmark
+    assert report.status is AnalysisStatus.PARTIAL
+    assert any("Benchmark" in warning for warning in report.warnings)
+    assert any(metric.key == "alpha" and metric.value is None for metric in report.metrics)
+
+
+def test_mutual_fund_without_benchmark_name_is_partial():
+    identity = ProductIdentity(product_type=ProductType.MUTUAL_FUND, name="Example", provider="AMC", scheme_code="1")
+    report = FundAnalyzer(Services(amfi=FakeMF(), nifty=FakeNifty())).analyze(AnalysisRequest(identity=identity))
+    assert report.status is AnalysisStatus.PARTIAL
+    assert any("Benchmark" in warning for warning in report.warnings)

@@ -33,3 +33,23 @@ def test_regulator_benchmark_and_rate_parsers():
     assert parse_nifty_tri(nifty, NOW)[0].series_kind == "TRI"
     rbi = "<table><tr><th>Date</th><th>91 day T-Bill</th></tr><tr><td>07-Aug-2026</td><td>5.52</td></tr></table>"
     assert parse_rbi_tbill(rbi, NOW).value == 0.0552
+
+
+def test_nifty_parser_accepts_json_encoded_string_payload():
+    nifty = '{"d": "[{\\"Date\\": \\"11-Aug-2026\\", \\"NIFTY 500 Total Returns Index\\": \\"25,100.2\\"}]"}'
+    import json as json_module
+    payload = json_module.loads(nifty)
+    data = payload.get("d", payload)
+    if isinstance(data, str):
+        data = json_module.loads(data)
+    points = parse_nifty_tri(data, NOW)
+    assert points[0].value == 25100.2
+
+
+def test_resolve_nifty_index_maps_known_and_unknown_names():
+    from fund_analyzer.sources.nifty import resolve_nifty_index
+    assert resolve_nifty_index("Nifty 500 TRI") == "NIFTY 500"
+    assert resolve_nifty_index("Nifty Smallcap 250 TRI") == "NIFTY SMALLCAP 250"
+    assert resolve_nifty_index("nifty midcap 150 tri") == "NIFTY MIDCAP 150"
+    assert resolve_nifty_index("Custom Benchmark TRI") == "CUSTOM BENCHMARK"
+    assert resolve_nifty_index("Nifty 500") == "NIFTY 500"

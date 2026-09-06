@@ -62,3 +62,18 @@ class SafeHttpClient:
             return response
         raise SourceFetchError("Unable to fetch source")
 
+    def post_json(self, url: str, *, payload: dict, headers: dict[str, str] | None = None, max_bytes: int = 10_000_000) -> httpx.Response:
+        current = validate_public_url(url)
+        for attempt in range(3):
+            response = self.client.post(current, json=payload, headers=headers)
+            if response.status_code not in {429, 502, 503, 504} or attempt == 2:
+                break
+            time.sleep(0.15 * (attempt + 1))
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+        if content_type and "json" not in content_type:
+            raise SourceFetchError(f"Unsupported content type: {content_type}")
+        if len(response.content) > max_bytes:
+            raise SourceFetchError("Response exceeds size limit")
+        return response
+
