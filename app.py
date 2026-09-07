@@ -64,6 +64,13 @@ def find_candidates(product_type: ProductType, query: str, provider: str) -> tup
         return [], f"Product directory unavailable: {type(exc).__name__}. Check your connection and try again."
 
 
+def _on_product_type_change():
+    st.session_state.candidates = []
+    st.session_state.report = None
+    st.session_state.pop("confirmed_product", None)
+    st.session_state.search_warning = None
+
+
 def suggested_benchmark(identity: ProductIdentity) -> str:
     text = f"{identity.category or ''} {identity.name}".lower()
     if any(word in text for word in ("small cap", "smallcap")):
@@ -136,6 +143,8 @@ def render_report(report):
         if report.ai and report.ai.available:
             for item in report.ai.pros:
                 st.markdown(f"- {badge('AI Assessment')} {html.escape(item.text)}", unsafe_allow_html=True)
+        elif report.ai and not report.ai.available and report.ai.limitations:
+            st.caption("AI assessment failed — " + " ".join(report.ai.limitations))
         else:
             st.caption("Configure the AI endpoint to generate an independent assessment.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -144,6 +153,8 @@ def render_report(report):
         if report.ai and report.ai.available:
             for item in report.ai.cons:
                 st.markdown(f"- {badge('AI Assessment', 'amber')} {html.escape(item.text)}", unsafe_allow_html=True)
+        elif report.ai and not report.ai.available and report.ai.limitations:
+            st.caption("AI assessment failed — verified evidence below remains usable.")
         else:
             st.caption("No AI assessment is available; verified evidence remains below.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -154,6 +165,8 @@ def render_report(report):
         with st.expander("Risks and conditions to monitor"):
             for item in [*report.ai.risks, *report.ai.monitoring]:
                 st.markdown(f"- {html.escape(item.text)}")
+    elif report.ai and not report.ai.available and report.ai.limitations:
+        st.info("AI view unavailable (" + " ".join(report.ai.limitations) + ") The report does not replace it with an invented conclusion.")
     else:
         st.info("AI view unavailable. The report does not replace it with an invented conclusion.")
 
@@ -199,7 +212,7 @@ if "report" not in st.session_state:
 input_card = st.container(border=True)
 with input_card:
     left, right = st.columns([1, 2])
-    product_label = left.selectbox("Product type", list(TYPE_LABELS), key="product_type")
+    product_label = left.selectbox("Product type", list(TYPE_LABELS), key="product_type", on_change=_on_product_type_change)
     query = right.text_input("Product or strategy name", placeholder="e.g. Parag Parikh Flexi Cap Fund")
     provider = st.text_input("Manager / AMC (required for manual AIF lookup)", placeholder="e.g. Example Capital")
     public_url = st.text_input("Official website or factsheet URL (optional)", placeholder="https://...")

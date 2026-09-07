@@ -14,7 +14,7 @@ from .validation import AIValidationError, EvidencePacket, validate_ai_analysis
 class AIClient:
     def __init__(self, config: AppConfig, transport: httpx.BaseTransport | None = None):
         self.config = config
-        self.http = httpx.Client(transport=transport, timeout=90)
+        self.http = httpx.Client(transport=transport, timeout=120)
 
     def _request(self, packet: EvidencePacket, repair: str | None = None) -> AIAnalysis:
         schema = AIAnalysis.model_json_schema()
@@ -43,6 +43,10 @@ class AIClient:
         try:
             return validate_ai_analysis(self._request(packet), packet)
         except AIValidationError as first:
+            # A timed-out request is not a bad-response repair case; retrying
+            # would double the wait for a slow or dead endpoint.
+            if isinstance(first.__cause__, httpx.TimeoutException):
+                return AIAnalysis(available=False, limitations=[f"AI analysis unavailable: {self.config.redact(str(first))}"])
             try:
                 return validate_ai_analysis(self._request(packet, str(first)), packet)
             except AIValidationError as second:

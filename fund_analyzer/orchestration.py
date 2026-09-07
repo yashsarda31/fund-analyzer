@@ -33,6 +33,18 @@ class Services(BaseModel):
     ai: Any | None = None
 
 
+METRIC_LABELS = {
+    "cagr_1y": "CAGR 1Y",
+    "cagr_3y": "CAGR 3Y",
+    "cagr_5y": "CAGR 5Y",
+    "volatility": "Volatility (ann.)",
+    "max_drawdown": "Max drawdown",
+    "sharpe": "Sharpe ratio",
+    "sortino": "Sortino ratio",
+    "alpha": "Alpha (ann.)",
+}
+
+
 class FundAnalyzer:
     def __init__(self, services: Services):
         self.services = services
@@ -164,7 +176,7 @@ class FundAnalyzer:
                 trimmed = benchmark_series[benchmark_series.index >= series.index.min()]
                 bench_aligned = trimmed if not trimmed.empty else benchmark_series
             calculated = calculate_public_metrics(series, bench_aligned, None)
-            metrics = [Metric(key=key, label=key.replace("_", " ").title(), value=value, unit="ratio" if key in {"sharpe", "sortino"} else "%", as_of=points[-1].date, warnings=calculated.warnings if key == "cagr_1y" else []) for key, value in calculated.values.items()]
+            metrics = [Metric(key=key, label=METRIC_LABELS.get(key, key.replace("_", " ").title()), value=value, unit="ratio" if key in {"sharpe", "sortino"} else "%", as_of=points[-1].date, warnings=calculated.warnings if key == "cagr_1y" else []) for key, value in calculated.values.items()]
             rebased = growth_of_amount(series)
             chart = ChartSpec(
                 kind="growth_of_100k",

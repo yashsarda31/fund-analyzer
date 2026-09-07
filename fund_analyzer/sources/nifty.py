@@ -75,6 +75,8 @@ class NiftyCollector:
             raw = response.json()
         except Exception as exc:
             return SourceResult(source_name="NSE", available=False, error_code=type(exc).__name__, warnings=[f"NSE TRI request failed: {type(exc).__name__}"])
+        if isinstance(raw, dict) and "d" not in raw and raw.get("Message"):
+            return SourceResult(source_name="NSE", available=False, error_code="endpoint_error", warnings=["NSE TRI endpoint rejected the request; the service may now require authentication"])
         data = raw.get("d", raw) if isinstance(raw, dict) else raw
         if isinstance(data, str):
             try:
